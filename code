@@ -1,0 +1,81 @@
+import pandas as pd
+import folium
+from folium.plugins import MarkerCluster, HeatMap
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Load the dataset
+file_path = '/content/drive/My Drive/Global Missing Migrants Dataset.csv'
+data = pd.read_csv(file_path)
+
+# Ensure column names are clean
+data.columns = data.columns.str.strip()
+
+# Convert 'Incident Year' and 'Reported Month' to datetime format
+data['Reported Month'] = data['Reported Month'].fillna('01').astype(str).str.zfill(2)
+data['Date'] = pd.to_datetime(data['Incident year'].astype(str) + '-' + data['Reported Month'], errors='coerce')
+
+# Add a 'Season' column based on months
+def get_season(month):
+    if month in [12, 1, 2]:
+        return 'Winter'
+    elif month in [3, 4, 5]:
+        return 'Spring'
+    elif month in [6, 7, 8]:
+        return 'Summer'
+    else:
+        return 'Fall'
+
+data['Season'] = data['Date'].dt.month.apply(get_season)
+
+# Extract Latitude and Longitude
+data['Coordinates'] = data['Coordinates'].str.split(',')
+data['Latitude'] = data['Coordinates'].apply(lambda x: float(x[0]) if isinstance(x, list) and len(x) > 0 else None)
+data['Longitude'] = data['Coordinates'].apply(lambda x: float(x[1]) if isinstance(x, list) and len(x) > 1 else None)
+data = data.dropna(subset=['Latitude', 'Longitude', 'Migration route'])
+
+# Aggregate total risks per route and season
+route_season_data = data.groupby(['Migration route', 'Season']).agg(
+    {'Total Number of Dead and Missing': 'sum', 'Latitude': 'first', 'Longitude': 'first'}
+).reset_index()
+
+# ----- Part 1: Plot total migration risks for routes per season -----
+plt.figure(figsize=(12, 6))
+sns.barplot(
+    data=route_season_data,
+    x='Season',
+    y='Total Number of Dead and Missing',
+    hue='Migration route',
+    ci=None
+)
+plt.title('Total Migration Risks by Season for Each Route')
+plt.xlabel('Season')
+plt.ylabel('Total Number of Dead and Missing')
+plt.legend(loc='upper right', bbox_to_anchor=(1.25, 1))
+plt.show()
+
+# ----- Part 2: Visualize routes for each season on a map -----
+seasonal_maps = {}
+seasons = ['Winter', 'Spring', 'Summer', 'Fall']
+
+for season in seasons:
+    seasonal_data = route_season_data[route_season_data['Season'] == season]
+    season_map = folium.Map(location=[20, 0], zoom_start=2, tiles='OpenStreetMap')
+    marker_cluster = MarkerCluster().add_to(season_map)
+
+    for _, row in seasonal_data.iterrows():
+        folium.Marker(
+            location=[row['Latitude'], row['Longitude']],
+            popup=(
+                f"<b>Route:</b> {row['Migration route']}<br>"
+                f"<b>Season:</b> {row['Season']}<br>"
+                f"<b>Total Risk:</b> {row['Total Number of Dead and Missing']}"
+            ),
+            icon=folium.Icon(color='red', icon='info-sign')
+        ).add_to(marker_cluster)
+    seasonal_maps[season] = season_map
+
+# Display maps for all seasons
+for season, map_obj in seasonal_maps.items():
+    print(f"--- {season} Migration Routes ---")
+    display(map_obj)
